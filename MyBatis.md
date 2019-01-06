@@ -421,6 +421,156 @@ insert、delete、update 常用属性介绍，涉及到select 的，就不在说
 
 这是它会根据传入的对象属性，去匹配数据库字段列名，一致就直接赋值到sql中，如果你的属性和数据库字段名不一致，那么需要借助resultMap 去映射对应关系。
 
+#####ResultMap
+
+简单的语句不需要明确的结果映射，而复杂一点的语句只需要描述它们的关系就行了。
+
+	<select id="selectUserInformationById" resultType="map">
+        select * from user
+    </select>
+
+
+这里使用的是简单的映射，将每次执行的结果封装成一个map，自动将对应的字段列名就是map的key。
+
+		List<Object> list = sqlSession.selectList("UserMapper.selectUserInformationById");
+
+这里查询的结果由于有多条，需要将map放在list 中，所以采用的是selectlist方式。
+
+
+运行结果如下：
+
+
+    [{userid=2, username=laoqiang1}, {userid=3, username=laok}, {userid=4, username=xiaok}, {userid=5, username=wangk}, {userid=6, username=lik}]
+
+但我们知道map不是很好的领域模型，好的领域模型一般是采用javabean和pojo。
+
+	<select id="selectUserInformationById" resultType="user">//这里的user 是User javabean 的别名
+        select userid,username,usermessage from user
+    </select>
+
+这里就是将查询的结果映射到User javabean 中，它默认将javabean 的属性和数据库字段列对应，忽略大小写，如果不一样，将无法正确赋值。
+
+javabean 的代码就不给出，请自行补充
+
+	List<Object> list = sqlSession.selectList("UserMapper.selectUserInformationById");
+		log.debug(list.toString());
+		for(int i = 0;i<list.size();i++) {
+			User u = (User) list.get(i);
+			System.out.println(u.getUserName());
+		}
+
+
+如果你觉得上述数据库字段列和javabean 属性自动映射对应关系不是很清晰，你可以利用sql 特性，去使用别名来实现对应关系。
+
+	<select id="selectUserInformationById" resultType="user">
+        select userid as "userId",username as "userName",usermessage as "userMessage" from user
+    </select>
+
+通过数据库的as 关键字将列的别名设置成和javabean 属性一致，这样的映射关系更精确。
+
+还可以使用外部的resultMap 去定义javabean 属性和数据库字段的对应关系
+
+	<select id="selectUserInformationById" resultMap="user">
+		select userid as "userId",username as "userName",usermessage as
+		"userMessage" from user
+	</select>
+
+	<resultMap type="user" id="user">
+		<result property="userId" column="userid" />
+		<result property="userName" column="username" />
+		<result property="userMessage" column="usermessage" />
+	</resultMap>
+
+比较推荐的就是最后这种映射配置。
+
+高级ResultMap常用的子标签：
+
+- constructor： 用于在实例化类时，默认是通过无参构造函数。如果是你自己提供了有参的构造函数，会覆盖无参的，这是必须用该标签去指定。
+- idArg 是constructor的子标签：用在constructor中id 参数，标记出作为 ID 的结果可以帮助提高整体性能。
+- arg 是constructor的子标签：用在constructor的普通参数。
+- id ：一个 ID 结果;标记出作为 ID 的结果可以帮助提高整体性能。
+- result：注入到字段或 JavaBean 属性的普通结果。
+- association ：用来映射多个结果的关系。
+- collection ：用来映射多个结果的集合。
+- discriminator ：使用结果值来决定使用哪个 resultMap。
+- case ： 基于某些值的结果映射。
+
+ResultMap 常用的属性：
+
+- id：当前命名空间中的一个唯一标识，用于标识一个ResultMap。
+- type：类的完全限定名, 或者一个类型别名，指定映射的javabean。
+
+基于一对一的关联配置
+
+<!-- 注意resultMap 也是标签需要按照一定的顺序的 -->
+		<resultMap type="user" id="user">
+		<constructor>
+		<!-- javabean 里面提供的构造函数包含主键，所以需要使用idArg，column 里面是构造函数中对应的属性的数据库字段名称， 
+				我们通过name 去指定javabean 中的构造函数的参数和数据库的字段对应,此时你需要在你javabean 对应的构造函数上的参数，添加@param 
+				注解，指定和name一样的值 -->
+			<idArg column="userid" name="userId"></idArg>
+			<arg column="username" name="userName"></arg>
+		</constructor>
+		<!-- 这里userid 是表的主键，你用id 标签标识出来 ,有助于性能 -->
+		<id property="userId" column="userid" />
+		<!-- result 用来对基本字段的映射的 -->
+		<result property="userName" column="username" />
+		<result property="userMessage" column="usermessage" />
+		<!-- 用来描述一一对应的关系 association 里面可以直接引入一个外部的resultmap，可以在内部定义映射关系 -->
+		<association property="address" javaType="address"><!-- 这里的javaType必须具备，否则会报错，找不到对应的javabean -->
+			<id column="address_id" property="addressId"></id>
+			<result column="address_name" property="addressName" />
+		</association>
+		<!-- columnPrefix 用于在同一个表，有两个一样类型（为了我避免重复的列名，这时mybatis 就会分不清，需要你手动设置），用来区分不同的字段是映射到哪个javabean类对象中，这里的值是根据sql 设置别名的字段前缀一致 -->
+        //这个关联只是为了演示columnPrefix 用法
+		<association property="address1" javaType="address" columnPrefix="co">
+			<id column="address_id" property="addressId"></id>
+			<result column="address_name" property="addressName" />
+		</association>
+	</resultMap>
+
+关联查询语句：
+
+	<select id="select1" resultMap="user">
+		select * from user,address where
+		user.address_id = address.address_id
+	</select>
+
+ javabean(set、get省略，请自行补充！)
+
+	@Alias("user")
+	public class User {
+	private Integer userId;
+	private String userName;
+	private String userMessage;
+	private Address address;
+	private Address address1;
+
+	public Address getAddress1() {
+		return address1;
+	}
+
+	public void setAddress1(Address address1) {
+		this.address1 = address1;
+	}
+
+	public Address getAddress() {
+		return address;
+	}
+
+	public void setAddress(Address address) {
+		this.address = address;
+	}
+
+	public User(@Param("userId") Integer userId, @Param("userName") String userName) {
+		super();
+		this.userId = userId;
+		this.userName = userName;
+	}
+
+	}
+
+
 
 ######简单例子
 
