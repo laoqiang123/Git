@@ -345,6 +345,52 @@ Mybatis 提供三种数据源：[UNPOOLED|POOLED|JNDI]
 
 ### 探索Mybatis中的Mapper
 
+入门Mapper映射例子
+
+#### 采用xml 方式配置Mapper
+
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+    <mapper namespace="UserMapper">
+    	<select id="selectUserById" resultType="user"><!--resultType 这里的结果类型返回的应该是一个类，这里使用了之前配置文件的别名，简单方便省事，好吧！ -->
+    		select * from user where userid = #{id}
+    	</select>
+    </mapper>
+
+我们可以在Mapper文件中定义相应的sql语句，在sqlsession 中去全限名(namespace)+id 去调用
+
+同时需要将该Mapper.xml注册到mybatis 的配置文件中。
+
+    <mapper resource="UserMapper.xml"></mapper>
+
+   
+执行sql 操作：
+
+     User user = sqlSession.selectOne("com.example.test.mapper.UserMapper.seleectUserById",1);
+    
+#### 通过代码去配置Mapper
+
+    public interface UserMapper {
+    	@Select("select * from user where userid=#{id}")
+    	public User selectUserById(int id);
+    }
+
+
+这种方式实际上很类似于我们之前的dao层写法，里面通过注解将sql语句写入，执行该方法的时候，便会执行相应的sql，这里需要注意的一点就是sql 中占位符的参数，最好和方法中的参数的顺序、名称一致。
+
+同时需要将该Mapper 类注册到mybatis 的配置文件中。
+
+		`<mapper class="com.example.test.mapper.UserMapper"/>`
+
+执行sql 操作：
+    
+    UserMapper userMapper = sqlSession.getMapper(UserMapper.class);
+    User user = userMapper.selectUserById(1);
+    log.debug("查询的结果是"+user.getUserName());
+
+这两种方法，比较推荐的还是通过Mapper.class方法，采用Mapper.xml
+这种方法涉及字符串，如果一旦写错，就会引出错误。
+
 #### 细讲xml 的Mapper 映射文件
 
 Mybatis 的Mapper映射文件有几个配置元素（按照它们应该被定义的顺序）：
@@ -485,13 +531,13 @@ javabean 的代码就不给出，请自行补充
 
 高级ResultMap常用的子标签：
 
-- constructor： 用于在实例化类时，默认是通过无参构造函数。如果是你自己提供了有参的构造函数，会覆盖无参的，这是必须用该标签去指定。
+- constructor： 用于在实例化类时，默认是通过无参构造函数。如果是你自己提供了有参的构造函数，会覆盖无参的，这是必须用该标签去指定。之前，我不明白这个constructor 这个作用，如果是有参的构造函数，就是在构造结果对象的时候，你sql 返回的字段，必须要对应包含构造参数的属性，否则无法正确构造结果对象。
 - idArg 是constructor的子标签：用在constructor中id 参数，标记出作为 ID 的结果可以帮助提高整体性能。
 - arg 是constructor的子标签：用在constructor的普通参数。
 - id ：一个 ID 结果;标记出作为 ID 的结果可以帮助提高整体性能。
 - result：注入到字段或 JavaBean 属性的普通结果。
-- association ：用来映射多个结果的关系。
-- collection ：用来映射多个结果的集合。
+- association ：用来映射一对一的关系。
+- collection ：用来映射一对多的关系。
 - discriminator ：使用结果值来决定使用哪个 resultMap。
 - case ： 基于某些值的结果映射。
 
@@ -634,54 +680,217 @@ ResultMap 常用的属性：
 		String[] name = new String[] {"laok","xiaok","wangk","lik"};
 		sqlSession.insert("UserMapper.insertUserArray",name);
 
+一对多配置：
+
+在多方配置外键。
+
+一个用户可以有多个telephone
+
+	private List<Telephone> telephones;
+
+在user resultmap 添加一对多配置：
+
+			<!-- ofType 是指定集合里面元素的类型 -->
+			<collection property="telephones" ofType="telephone">
+			<id column="tel_id" property="telId" />
+			<result property="userId" column="uid" />
+			<result column="tel_name" property="telName"></result>
+		</collection>
 
 
+关联查询语句：
+
+	<select id="selectTel" resultMap="user">
+		select userid,username,
+		tel_name from
+		user , telephone where  user.userid
+		=telephone.uid
+	</select>
+
+运行结果：
+
+		List<Object> list = sqlSession.selectList("UserMapper.selectTel");
+		for(Object o :list) {
+			User u = (User)o;
+			List<Telephone> list1 = u.getTelephones();
+			for(Telephone t:list1) {
+				log.debug(t.getTelName());
+			}
+		}
+
+discriminator 鉴别器
+
+鉴别器有时查询可以会返回不同数据类型的结果集，我们可以通过配置该标签，来配置面向对象的继承关系，实现sql的多态查询。
+
+我们一般用表来表现对象之间的继承关系时通常有三种方式。
+
+1. 第一种是把所有对象包含的属性都存放在一张表中，然后用一个字段来区分当前记录对应的对象类型。
+2. 第二种是每个子类型一张表，每张表都存该对象所有的属性。
+3. 第三种是基类作为一张表进行存储，每个子类特性的属性都新建一张表进行保存，然后在基类对应的表里面通过一个字段来区分对象的类型，每一个子表添加一个字段作为主键，同时添加基表的主键作为外键。
 
 
+本例子就是基于第三种：
 
-#### 采用xml 方式配置Mapper
+		<resultMap id="employ" type="employ">
+		<id column="emp_id" property="empId" />
+		<result column="emp_name" property="empName" />
+		<result column="emp_type" property="empType"/>
+		<!-- javaType 这个是必须 ，column 用来指定数据库中的鉴别值的字段名-->
+		<discriminator column="emp_type" javaType="int">
+			<case value="1" resultType="manager">//这里可以使用resultMap，一样的效果
+				<result column="manager_name" property="managerName" />
+				<result column="manager_info" property="managerInfo" />
+			</case>
+			<case value="2" resultType="developer">
+				<result column="developer_name" property="developerName" />
+				<result column="developer_project" property="developerproject" />
+			</case>
+		</discriminator>
+	</resultMap>
 
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-    <mapper namespace="UserMapper">
-    	<select id="selectUserById" resultType="user"><!--resultType 这里的结果类型返回的应该是一个类，这里使用了之前配置文件的别名，简单方便省事，好吧！ -->
-    		select * from user where userid = #{id}
-    	</select>
-    </mapper>
+Mybatis会从结果集中得到每条记录, 然后比较它的emp_type类型的值。 如果它匹配任何一个鉴别器的实例,那么就使用这个实例指定的结果映射。换句话说,这样做完全是剩余的结果映射被忽略 。如果没有任何一个实例相匹配,那么 MyBatis 仅仅使用鉴别器块外定义的结果映射。
 
-我们可以在Mapper文件中定义相应的sql语句，在sqlsession 中去全限名(namespace)+id 去调用
+javabean(set、get方法省略)：
 
-同时需要将该Mapper.xml注册到mybatis 的配置文件中。
+	@Alias("employ")
+	public class Employ {
+	private Integer empId;
+	private String empName;
+	private Integer empType;
+	}
 
-    <mapper resource="UserMapper.xml"></mapper>
+	@Alias("developer")
+	public class Developer extends Employ {
+	private String developerName;
+	private String developerproject;
+	}
 
-   
-执行sql 操作：
-
-     User user = sqlSession.selectOne("com.example.test.mapper.UserMapper.seleectUserById",1);
-    
-#### 通过代码去配置Mapper
-
-    public interface UserMapper {
-    	@Select("select * from user where userid=#{id}")
-    	public User selectUserById(int id);
-    }
-
-
-这种方式实际上很类似于我们之前的dao层写法，里面通过注解将sql语句写入，执行该方法的时候，便会执行相应的sql，这里需要注意的一点就是sql 中占位符的参数，最好和方法中的参数的顺序、名称一致。
-
-同时需要将该Mapper 类注册到mybatis 的配置文件中。
-
-		`<mapper class="com.example.test.mapper.UserMapper"/>`
-
-执行sql 操作：
-    
-    UserMapper userMapper = sqlSession.getMapper(UserMapper.class);
-    User user = userMapper.selectUserById(1);
-    log.debug("查询的结果是"+user.getUserName());
-
-这两种方法，比较推荐的还是通过Mapper.class方法，采用Mapper.xml
-这种方法涉及字符串，如果一旦写错，就会引出错误。
+	@Alias("manager")
+	public class Manager extends Employ {
+	private String managerName;
+	private String managerInfo;
+	}
 
 
+extends 属性，该属性可以加载父类的结果集的映射，在上面的例子，如果你是在case 中直接定义结果集映射，而不是使用外部结果集映射，那么它默认是自动加载父类的结果集映射，如果你不添加该属性，在子类中是无法获取父类的结果集映射。
 
+	<resultMap id="employ" type="employ">
+		<id column="emp_id" property="empId" />
+		<result column="emp_name" property="empName" />
+		<result column="emp_type" property="empType" />
+		<!-- javaType 这个是必须 ，column 用来指定数据库中的鉴别值的字段名 -->
+		<discriminator column="emp_type" javaType="int">
+			<case value="1" resultType="manager" resultMap="manager">
+			</case>
+			<case value="2" resultType="developer" resultMap="developer">
+			</case>
+		</discriminator>
+	</resultMap>
+	<resultMap id="manager" type="manager" extends="employ">
+		<result column="manager_name" property="managerName" />
+		<result column="manager_info" property="managerInfo" />
+	</resultMap>
+	<resultMap id="developer" type="developer" extends="employ">
+		<result column="developer_name" property="developerName" />
+		<result column="developer_project" property="developerproject" />
+	</resultMap>
+
+查询语句:
+
+	<select id="selectAllEmploy" resultMap="employ">
+		select * from employ left
+		join manager on
+		employ.emp_id = manager.emp_id left
+		join developer on
+		developer.emp_id = employ.emp_id;
+	</select>
+
+运行：
+
+	List<Object> list = sqlSession.selectList("UserMapper.selectAllEmploy");
+		for (Object o : list) {
+			Employ e = (Employ) o;
+			switch (e.getEmpType()) {
+			case 0:
+				log.debug("im a normal employ");
+				log.debug(e.getEmpName());
+				break;
+			case 1:
+				Manager m = (Manager) e;
+				log.debug("im a manager employ");
+				log.debug(m.getEmpName() + m.getManagerInfo());
+				break;
+			case 2:
+				Developer d = (Developer) e;
+				log.debug("im a developer employ");
+				log.debug(d.getEmpName() + d.getDeveloperproject());
+				break;
+
+			default:
+				break;
+			}
+		}
+
+#####Auto-mapping（自动映射）
+
+当自动映射查询结果时，MyBatis会获取sql返回的列名并在java类中查找相同名字的属性（忽略大小写）
+
+自动映射的等级：
+1. NONE - 禁用自动映射。仅设置手动映射属性。
+2. PARTIAL - 将自动映射结果除了那些有内部定义内嵌结果映射的
+3. (joins).
+3. FULL - 自动映射所有
+
+不建议使用第三种，出现内嵌结果映射，具有相同的字段的时候，自动映射有可能会出现不是我们预期的结果。
+
+
+#####cache（缓存）
+
+Mybatis 默认是自动提供session 下的缓存，如果是开启全局的二级缓存，需要在sql 映射文件中，添加：
+
+	<cache></cache>
+
+
+如果配置了上面这句，相当于：
+
+1. 映射语句文件中的所有 select 语句将会被缓存。
+2. **映射语句文件中的所有 insert,update 和 delete 语句会刷新缓存。**
+3. 缓存会使用 Least Recently Used(LRU,最近最少使用的)算法来收回。
+4. 缓存会存储列表集合或对象(无论查询方法返回什么)的 1024 个引用。
+5. 缓存会被视为是 read/write(可读/可写)的缓存,意味着对象检索不是共享的,而 且可以安全地被调用者修改,而不干扰其他调用者或线程所做的潜在修改。
+6. 缓存不会以任何时间来自动刷新。
+
+
+修改二级缓存的配置：
+
+	<cache eviction="FIFO" flushInterval="60000" readOnly="true"
+		size="512"></cache>
+
+
+建了一个 FIFO 缓存,并每隔 60 秒刷新,存数结果对象或列表的 512 个引用,而且返回的对象被认为是只读的,因此在不同线程中的调用者之间修改它们会致冲突。
+
+可用的收回策略有:
+
+- LRU – 最近最少使用的:移除最长时间不被使用的对象。
+- FIFO – 先进先出:按对象进入缓存的顺序来移除它们。
+- SOFT – 软引用:移除基于垃圾回收器状态和软引用规则的对象。
+- WEAK – 弱引用:更积极地移除基于垃圾收集器状态和弱引用规则的对象。
+
+默认的是 LRU。
+
+flushInterval(刷新间隔)，以毫秒为单位。
+
+size(引用数目)可以被设置为任意正整数,代表你缓存的引用数。
+
+readOnly(只读)属性可以被设置为 true 或 false。只读的缓存会给所有调用者返回缓 存对象的相同实例。因此这些对象不能被修改。
+
+
+二级缓存是针对全局，如果你想对某些特定的sql 节点，进行缓存设置：
+
+	<select id="select2" resultMap="user" flushCache="true" useCache="true">
+		select * from user
+	</select>
+
+
+flushCache：执行该语句，刷新缓存。
+useCache：使用缓存。
